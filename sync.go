@@ -127,6 +127,13 @@ func (s *Semaphore) TryAcquire(n int) (*SemaphorePermit, bool) {
 	return &SemaphorePermit{sem: s, count: n}, true
 }
 
+func (s *Semaphore) Acquire(n int) *AcquireFuture {
+	if n < 0 {
+		panic("cannot acquire negative permits")
+	}
+	return &AcquireFuture{sem: s, needed: n}
+}
+
 type SemaphorePermit struct {
 	sem      *Semaphore
 	count    int
@@ -251,4 +258,70 @@ func (f *AcquireFuture) Cancel() {
 	for _, wake := range toWake {
 		wake()
 	}
+}
+
+type AsyncMutex[T any] struct {
+	sem *Semaphore
+	val T
+}
+
+func NewAsyncMutex[T any](initial T) *AsyncMutex[T] {
+	return &AsyncMutex[T]{
+		sem: NewSemaphore(1),
+		val: initial,
+	}
+}
+
+func (m *AsyncMutex[T]) Lock() *MutexLockFuture[T] {
+	return &MutexLockFuture[T]{
+		mu:  m,
+		acq: m.sem.Acquire(1),
+	}
+}
+
+func (m *AsyncMutex[T]) TryLock() (*MutexGuard[T], bool) {
+	p, ok := m.sem.TryAcquire(1)
+	if !ok {
+		return nil, false
+	}
+	return &MutexGuard[T]{mu: m, permit: p}, true
+}
+
+type MutexGuard[T any] struct {
+	mu       *AsyncMutex[T]
+	permit   *SemaphorePermit
+	released atomic.Bool
+}
+
+func (g *MutexGuard[T]) Ptr() *T {
+	if g.released.Load() {
+		panic("accessing MutexGuard after Unlock")
+	}
+	return &g.mu.val
+}
+
+func (g *MutexGuard[T]) Unlock() {
+	if g != nil && g.released.CompareAndSwap(false, true) {
+		g.permit.Release()
+	}
+}
+
+type MutexLockFuture[T any] struct {
+	mu  *AsyncMutex[T]
+	acq *AcquireFuture
+}
+
+func (f *MutexLockFuture[T]) Poll(waker Waker) Poll[*MutexGuard[T]] {
+	p := f.acq.Poll(waker)
+	if !p.IsReady() {
+		return Pending[*MutexGuard[T]]()
+	}
+	return Ready(&MutexGuard[T]{
+		mu:     f.mu,
+		permit: p.Value.Value,
+	})
+}
+
+func (f *MutexLockFuture[T]) Cancel() {
+	f.acq.Cancel()
 }

@@ -2,13 +2,6 @@ package main
 
 type Waker = func()
 
-// type PollStatus int
-
-// const (
-// 	Pending PollStatus = iota
-// 	Ready
-// )
-
 type Poll[T any] struct {
 	Value T
 	Ready bool

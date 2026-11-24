@@ -4,6 +4,7 @@ package main
 // 	"errors"
 // 	"fmt"
 // 	"log"
+// 	"structs"
 // 	"syscall"
 // )
 
@@ -74,7 +75,7 @@ package main
 // 	written int
 // }
 
-// func (t *EchoTask) Poll(waker Waker) PollStatus {
+// func (t *EchoTask) Poll(waker Waker) Poll[struct{}] {
 // 	for {
 // 		switch t.state {
 // 		case echoStateReading:

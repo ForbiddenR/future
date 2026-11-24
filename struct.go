@@ -11,6 +11,11 @@ func (p *Poll[T]) IsReady() bool {
 	return p.Ready
 }
 
+type Result[T any] struct {
+	Value T
+	Err   error
+}
+
 func Pending[T any]() Poll[T] {
 	return Poll[T]{Ready: false}
 }

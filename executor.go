@@ -1,12 +1,25 @@
 package main
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
+
+type Future[T any] interface {
+	Poll(waker Waker) Poll[T]
+}
+
+type task struct {
+	mu     sync.Mutex
+	poll   func(waker Waker) bool
+	queued bool
+	done   bool
+}
 
 type Executor struct {
-	mu     sync.Mutex
-	cond   sync.Cond
-	queue  []*Task
-	closed bool
+	mu    sync.Mutex
+	cond  sync.Cond
+	queue []*task
 }
 
 func NewExecutor() *Executor {
@@ -15,49 +28,58 @@ func NewExecutor() *Executor {
 	return e
 }
 
-func (e *Executor) enqueue(t *Task) {
+func (e *Executor) enqueue(t *task) {
 	e.mu.Lock()
-	if !e.closed {
+	if !t.queued {
+		t.queued = true
 		e.queue = append(e.queue, t)
 		e.cond.Signal()
 	}
 	e.mu.Unlock()
 }
 
-func (e *Executor) Spawn(f Future) {
-	e.enqueue(&Task{future: f})
-}
+func BlockOn[T any](e *Executor, root Future[T]) T {
+	var (
+		result T
+		done   atomic.Bool
+	)
+	t := &task{
+		poll: func(waker Waker) bool {
+			res := root.Poll(waker)
+			if !res.IsReady() {
+				return false
+			}
+			result = res.Value
+			done.Store(true)
+			return true
+		},
+	}
+	e.enqueue(t)
 
-func (e *Executor) Stop() {
-	e.mu.Lock()
-	e.closed = true
-	e.cond.Broadcast()
-	e.mu.Unlock()
-}
-
-func (e *Executor) Run() {
-	for {
+	for !done.Load() {
 		e.mu.Lock()
-		for len(e.queue) == 0 && !e.closed {
+		for len(e.queue) == 0 && !done.Load() {
 			e.cond.Wait()
 		}
-		if len(e.queue) == 0 && e.closed {
+		if done.Load() {
 			e.mu.Unlock()
-			return
+			break
 		}
-		task := e.queue[0]
+		curr := e.queue[0]
 		e.queue = e.queue[1:]
+		curr.queued = false
 		e.mu.Unlock()
 
-		task.mu.Lock()
-		if !task.done {
+		curr.mu.Lock()
+		if !curr.done {
 			waker := func() {
-				e.enqueue(task)
+				e.enqueue(curr)
 			}
-			if task.future.Poll(waker) == Ready {
-				task.done = true
+			if curr.poll(waker) {
+				curr.done = true
 			}
 		}
-		task.mu.Unlock()
+		curr.mu.Unlock()
 	}
+	return result
 }

@@ -84,7 +84,7 @@ func (s *Semaphore) addPermitsLockd(n int) []Waker {
 	for n > 0 && len(s.waiters) > 0 {
 		head := s.waiters[0]
 		rem := head.needed - head.assigned
-		if n > rem {
+		if n >= rem {
 			head.assigned = head.needed
 			n -= rem
 			s.waiters = s.waiters[1:]
@@ -221,7 +221,7 @@ func (f *AcquireFuture) Poll(waker Waker) Poll[Result[*SemaphorePermit]] {
 
 	w.waker = waker
 	f.sem.mu.Unlock()
-	return Ready(Result[*SemaphorePermit]{})
+	return Pending[Result[*SemaphorePermit]]()
 }
 
 func (f *AcquireFuture) Cancel() {
